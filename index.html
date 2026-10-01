@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infinite Runner Reflex Game</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  canvas { display: block; image-rendering: pixelated; touch-action: none; }
+  body { background: #1e293b; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start font-sans text-white pt-8">
+<div class="w-full max-w-xl px-4">
+  <h1 class="text-2xl font-bold text-center text-white mb-1">Infinite Runner Reflex</h1>
+  <p class="text-center text-slate-400 text-sm mb-4">Jump to dodge obstacles. Space / Click / Tap to jump.</p>
+
+  <!-- HUD -->
+  <div class="flex justify-between items-center mb-2 px-1">
+    <div class="text-sm text-slate-300">Score: <span id="scoreDisplay" class="font-mono font-bold text-white">0</span></div>
+    <div class="text-sm text-slate-300">Best: <span id="highDisplay" class="font-mono font-bold text-yellow-400">0</span></div>
+    <div class="text-sm text-slate-300">Speed: <span id="speedDisplay" class="font-mono text-orange-300">1.0x</span></div>
+  </div>
+
+  <!-- Canvas -->
+  <div class="rounded-xl overflow-hidden shadow-2xl border border-slate-700">
+    <canvas id="gameCanvas" width="600" height="200" aria-label="Infinite runner game canvas"></canvas>
+  </div>
+
+  <!-- Controls hint -->
+  <div class="text-center text-slate-500 text-xs mt-3">Press Space, click/tap the canvas, or use the button below</div>
+  <div class="flex justify-center mt-3">
+    <button id="jumpBtn" class="px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm" aria-label="Jump">Jump / Start</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const LS_KEY = 'irr_score';
+const W = canvas.width, H = canvas.height;
+const GROUND = H - 30;
+const PLAYER_X = 80;
+const PLAYER_SIZE = 28;
+const BASE_SPEED = 4;
+
+let gameState = 'idle'; // idle, running, dead
+let score = 0;
+let highScore = parseInt(localStorage.getItem(LS_KEY)) || 0;
+let speed = BASE_SPEED;
+let frameCount = 0;
+let animId = null;
+
+// Player
+let player = { y: GROUND - PLAYER_SIZE, vy: 0, grounded: true };
+const GRAVITY = 0.6;
+const JUMP_FORCE = -13;
+
+// Obstacles
+let obstacles = [];
+let obstacleTimer = 0;
+let minInterval = 60;
+
+// Clouds (background)
+let clouds = [
+  { x: 100, y: 30, w: 60, speed: 0.3 },
+  { x: 300, y: 50, w: 80, speed: 0.2 },
+  { x: 500, y: 20, w: 50, speed: 0.4 },
+];
+
+document.getElementById('highDisplay').textContent = highScore;
+
+function jump() {
+  if (gameState === 'dead' || gameState === 'idle') {
+    startGame();
+    return;
+  }
+  if (gameState === 'running' && player.grounded) {
+    player.vy = JUMP_FORCE;
+    player.grounded = false;
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); jump(); } });
+canvas.addEventListener('click', jump);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); jump(); });
+document.getElementById('jumpBtn').addEventListener('click', jump);
+
+function startGame() {
+  score = 0;
+  speed = BASE_SPEED;
+  frameCount = 0;
+  obstacles = [];
+  obstacleTimer = 0;
+  player = { y: GROUND - PLAYER_SIZE, vy: 0, grounded: true };
+  gameState = 'running';
+  if (animId) cancelAnimationFrame(animId);
+  loop();
+}
+
+function spawnObstacle() {
+  const heightOptions = [20, 30, 40];
+  const h = heightOptions[Math.floor(Math.random() * heightOptions.length)];
+  const w = 14 + Math.floor(Math.random() * 14);
+  obstacles.push({ x: W + 10, y: GROUND - h, w, h });
+}
+
+function checkCollision() {
+  for (const ob of obstacles) {
+    if (
+      PLAYER_X + 4 < ob.x + ob.w &&
+      PLAYER_X + PLAYER_SIZE - 4 > ob.x &&
+      player.y + 4 < ob.y + ob.h &&
+      player.y + PLAYER_SIZE > ob.y
+    ) return true;
+  }
+  return false;
+}
+
+function update() {
+  frameCount++;
+  score = Math.floor(frameCount / 6);
+
+  // Gradually ramp speed
+  speed = BASE_SPEED + frameCount / 600;
+
+  // Player physics
+  player.vy += GRAVITY;
+  player.y += player.vy;
+  if (player.y >= GROUND - PLAYER_SIZE) {
+    player.y = GROUND - PLAYER_SIZE;
+    player.vy = 0;
+    player.grounded = true;
+  }
+
+  // Obstacles
+  obstacleTimer++;
+  const interval = Math.max(minInterval - Math.floor(frameCount / 200), 30);
+  if (obstacleTimer > interval) {
+    spawnObstacle();
+    obstacleTimer = 0;
+  }
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    obstacles[i].x -= speed;
+    if (obstacles[i].x + obstacles[i].w < 0) obstacles.splice(i, 1);
+  }
+
+  // Clouds
+  clouds.forEach(c => {
+    c.x -= c.speed;
+    if (c.x + c.w < 0) c.x = W + c.w;
+  });
+
+  // Collision
+  if (checkCollision()) {
+    gameState = 'dead';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem(LS_KEY, highScore);
+    }
+    document.getElementById('highDisplay').textContent = highScore;
+  }
+
+  document.getElementById('scoreDisplay').textContent = score;
+  document.getElementById('speedDisplay').textContent = speed.toFixed(1) + 'x';
+}
+
+function drawGround() {
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(0, GROUND, W, H - GROUND);
+  ctx.strokeStyle = '#475569';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, GROUND);
+  ctx.lineTo(W, GROUND);
+  ctx.stroke();
+}
+
+function drawPlayer() {
+  const x = PLAYER_X, y = player.y;
+  const s = PLAYER_SIZE;
+  // Body
+  ctx.fillStyle = '#6366f1';
+  ctx.beginPath();
+  ctx.roundRect(x, y + 8, s - 4, s - 8, 4);
+  ctx.fill();
+  // Head
+  ctx.fillStyle = '#a5b4fc';
+  ctx.beginPath();
+  ctx.arc(x + (s - 4) / 2, y + 7, 9, 0, Math.PI * 2);
+  ctx.fill();
+  // Eye
+  ctx.fillStyle = '#1e1b4b';
+  ctx.beginPath();
+  ctx.arc(x + (s - 4) / 2 + 4, y + 6, 2, 0, Math.PI * 2);
+  ctx.fill();
+  // Legs
+  const legAnim = Math.floor(frameCount / 5) % 2 === 0;
+  ctx.fillStyle = '#4f46e5';
+  if (player.grounded) {
+    ctx.fillRect(x + 2, y + s - 2, 6, legAnim ? 6 : 4);
+    ctx.fillRect(x + s - 12, y + s - 2, 6, legAnim ? 4 : 6);
+  }
+}
+
+function drawObstacles() {
+  obstacles.forEach(ob => {
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.roundRect(ob.x, ob.y, ob.w, ob.h, 3);
+    ctx.fill();
+    // cactus-like detail
+    ctx.fillStyle = '#dc2626';
+    ctx.fillRect(ob.x + ob.w / 2 - 2, ob.y - 6, 4, 8);
+  });
+}
+
+function drawClouds() {
+  ctx.fillStyle = 'rgba(148,163,184,0.3)';
+  clouds.forEach(c => {
+    ctx.beginPath();
+    ctx.ellipse(c.x + c.w / 2, c.y, c.w / 2, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(c.x + c.w * 0.3, c.y + 4, c.w * 0.3, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function drawIdle() {
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, W, H);
+  drawClouds();
+  drawGround();
+  drawPlayer();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = 'bold 22px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('INFINITE RUNNER', W / 2, H / 2 - 20);
+  ctx.font = '14px monospace';
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Space / Click / Tap to Start', W / 2, H / 2 + 8);
+}
+
+function drawDead() {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#f87171';
+  ctx.font = 'bold 24px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', W / 2, H / 2 - 25);
+  ctx.fillStyle = 'white';
+  ctx.font = '16px monospace';
+  ctx.fillText('Score: ' + score, W / 2, H / 2 + 5);
+  ctx.fillStyle = '#fbbf24';
+  ctx.font = '14px monospace';
+  ctx.fillText('Best: ' + highScore, W / 2, H / 2 + 25);
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '12px monospace';
+  ctx.fillText('Space / Click / Tap to Restart', W / 2, H / 2 + 50);
+}
+
+function draw() {
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, W, H);
+  drawClouds();
+  drawGround();
+  drawObstacles();
+  drawPlayer();
+  if (gameState === 'dead') drawDead();
+}
+
+function loop() {
+  if (gameState === 'running') {
+    update();
+    draw();
+    animId = requestAnimationFrame(loop);
+  } else if (gameState === 'dead') {
+    draw();
+  }
+}
+
+drawIdle();
+</script>
+</body>
+</html>
